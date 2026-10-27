@@ -1,0 +1,4 @@
+APP_OPTIM := release
+APP_CFLAGS := -O3 -DPKGNAME=com/fuzik/zapret -DCLSNAME=TProxyService
+APP_CPPFLAGS := -O3
+APP_SUPPORT_FLEXIBLE_PAGE_SIZES := true
