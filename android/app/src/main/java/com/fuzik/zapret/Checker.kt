@@ -99,19 +99,23 @@ object Checker {
         val scores = mutableListOf<StrategyScore>()
         for ((i, st) in STRATEGIES.withIndex()) {
             if (isCancelled()) break
-            onProgress(i, STRATEGIES.size, st.name)
+            // состояние интерфейса меняем только из главного потока
+            withContext(Dispatchers.Main) { onProgress(i, STRATEGIES.size, st.name) }
+            // у каждой стратегии свой порт: прошлый процесс мог ещё не освободить свой
+            val port = TEST_PORT + i
             val dpi = try {
-                ByeDpi.start(ctx, TEST_PORT, st.args)
+                ByeDpi.start(ctx, port, st.args)
             } catch (e: Exception) {
                 scores += StrategyScore(st, 0, 0, null)
                 continue
             }
             try {
-                val (ok, total, ms) = summarize(checkServices(STRATEGY_SERVICES, TEST_PORT, 4000))
+                val (ok, total, ms) = summarize(checkServices(STRATEGY_SERVICES, port, 4000))
                 scores += StrategyScore(st, ok, total, ms)
+            } catch (e: Exception) {
+                scores += StrategyScore(st, 0, 0, null)
             } finally {
                 dpi.stop()
-                Thread.sleep(300)
             }
         }
         scores.sortedWith(compareBy({ -it.ok }, { it.ms ?: Long.MAX_VALUE }))

@@ -98,6 +98,7 @@ fun ZapretApp(onStart: () -> Unit, onStop: () -> Unit) {
         var tab by remember { mutableIntStateOf(0) }
         var update by remember { mutableStateOf<Updater.Update?>(null) }
         var showUpdateDialog by remember { mutableStateOf(false) }
+        var crash by remember { mutableStateOf(CrashLog.take(ctx)) }
 
         LaunchedEffect(Unit) {
             if (prefs.checkUpdates) {
@@ -141,7 +142,8 @@ fun ZapretApp(onStart: () -> Unit, onStop: () -> Unit) {
         }
 
         val u = update
-        if (showUpdateDialog && u != null) UpdateDialog(u) { showUpdateDialog = false }
+        if (showUpdateDialog && u != null && crash == null) UpdateDialog(u) { showUpdateDialog = false }
+        crash?.let { CrashDialog(it) { crash = null } }
     }
 }
 
@@ -454,6 +456,31 @@ private fun SettingsScreen(prefs: Prefs, onUpdateFound: (Updater.Update?) -> Uni
 
 private fun openUrl(ctx: Context, url: String) =
     ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+
+@Composable
+private fun CrashDialog(text: String, onClose: () -> Unit) {
+    val ctx = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onClose,
+        containerColor = CardBg,
+        title = { Text("Приложение закрылось с ошибкой", color = TextMain) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Скопируйте текст и пришлите разработчику — так ошибку быстрее исправят.", color = Muted)
+                Text(text.take(1500), color = Muted, fontSize = 11.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(CardHi).padding(10.dp))
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("crash", text))
+                onClose()
+            }) { Text("Скопировать", color = Accent) }
+        },
+        dismissButton = { TextButton(onClick = onClose) { Text("Закрыть", color = Muted) } },
+    )
+}
 
 @Composable
 private fun UpdateDialog(u: Updater.Update, onClose: () -> Unit) {

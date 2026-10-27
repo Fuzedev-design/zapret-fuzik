@@ -33,6 +33,11 @@ class ZapretVpnService : VpnService() {
     private var tun: ParcelFileDescriptor? = null
     private var dpi: ByeDpi? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        CrashLog.install(this)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> stopVpn()

@@ -45,13 +45,21 @@ fun splitArgs(s: String): List<String> {
 /** Процесс byedpi (ciadpi) — локальный SOCKS5-прокси, который «портит» пакеты для обхода DPI. */
 class ByeDpi private constructor(private val process: Process, val port: Int) {
 
-    val alive: Boolean get() = process.isAlive
+    // Process.isAlive/destroyForcibly/waitFor(timeout) есть только с Android 8, а minSdk — 7
+    val alive: Boolean
+        get() = try {
+            process.exitValue()
+            false
+        } catch (e: IllegalThreadStateException) {
+            true
+        }
 
+    /** Останавливает byedpi и ждёт, пока он освободит порт (до ~2 секунд). */
     fun stop() {
         process.destroy()  // SIGTERM — byedpi сам закрывает соединения
-        thread(isDaemon = true) {
-            Thread.sleep(1500)
-            if (process.isAlive) process.destroyForcibly()
+        repeat(40) {
+            if (!alive && !isListening(port)) return
+            Thread.sleep(50)
         }
     }
 
@@ -62,14 +70,21 @@ class ByeDpi private constructor(private val process: Process, val port: Int) {
 
         /** Запускает byedpi и ждёт, пока он начнёт принимать подключения. */
         fun start(ctx: Context, port: Int, args: String): ByeDpi {
+            if (isListening(port)) throw IllegalStateException("Порт $port занят")
             val cmd = listOf(exe(ctx).absolutePath, "-i", "127.0.0.1", "-p", port.toString()) + splitArgs(args)
             val process = ProcessBuilder(cmd).redirectErrorStream(true).start()
             thread(isDaemon = true, name = "byedpi-log-$port") {
-                process.inputStream.bufferedReader().forEachLine { Log.d(TAG, it) }
+                // после остановки процесса чтение падает с IOException — это нормально,
+                // но необработанная ошибка в потоке закрыла бы всё приложение
+                try {
+                    process.inputStream.bufferedReader().forEachLine { Log.d(TAG, it) }
+                } catch (e: Exception) {
+                    Log.d(TAG, "log closed: ${e.message}")
+                }
             }
             val dpi = ByeDpi(process, port)
-            repeat(40) {
-                if (!process.isAlive) throw IllegalStateException("byedpi завершился: проверьте параметры стратегии")
+            repeat(60) {
+                if (!dpi.alive) throw IllegalStateException("byedpi завершился: проверьте параметры стратегии")
                 if (isListening(port)) return dpi
                 Thread.sleep(50)
             }
@@ -77,7 +92,7 @@ class ByeDpi private constructor(private val process: Process, val port: Int) {
             throw IllegalStateException("byedpi не запустился")
         }
 
-        private fun isListening(port: Int) = try {
+        fun isListening(port: Int) = try {
             Socket().use { it.connect(InetSocketAddress("127.0.0.1", port), 100) }
             true
         } catch (e: Exception) {
