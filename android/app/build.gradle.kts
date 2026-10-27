@@ -111,7 +111,30 @@ val buildByedpi by tasks.registering {
         }
     }
 }
-tasks.named("preBuild") { dependsOn(buildByedpi) }
+// --- Символические ссылки в исходниках hev ---------------------------------
+// Git на Windows без режима разработчика сохраняет симлинки как текстовые файлы
+// с путём внутри, и заголовки не находятся. Заменяем такие файлы копиями целей.
+val materializeHevSymlinks by tasks.registering {
+    description = "Заменяет симлинки в hev-socks5-tunnel копиями файлов (для Windows)"
+    doLast {
+        val repos = listOf(hevDir) + listOf("src/core", "third-part/hev-task-system", "third-part/yaml", "third-part/lwip")
+            .map { hevDir.resolve(it) }.filter { it.resolve(".git").exists() }
+        for (repo in repos) {
+            val proc = ProcessBuilder("git", "-C", repo.absolutePath, "ls-files", "-s").redirectErrorStream(true).start()
+            val links = proc.inputStream.bufferedReader().readLines()
+                .filter { it.startsWith("120000 ") }.map { it.substringAfter('\t') }
+            proc.waitFor()
+            for (path in links) {
+                val stub = repo.resolve(path)
+                if (!stub.isFile || stub.length() > 512) continue  // уже настоящий файл или ссылка
+                val target = stub.parentFile.resolve(stub.readText().trim()).normalize()
+                if (target.isFile) target.copyTo(stub, overwrite = true)
+            }
+        }
+    }
+}
+
+tasks.named("preBuild") { dependsOn(buildByedpi, materializeHevSymlinks) }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
