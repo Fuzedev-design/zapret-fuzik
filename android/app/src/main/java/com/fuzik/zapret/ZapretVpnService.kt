@@ -57,10 +57,19 @@ class ZapretVpnService : VpnService() {
 
     private fun startVpn() {
         val prefs = Prefs(this)
-        startInForeground(prefs.strategy)
+        AppLog.add("Запуск: стратегия «${prefs.strategy}», Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), ${Build.MANUFACTURER} ${Build.MODEL}")
+        try {
+            startInForeground(prefs.strategy)
+        } catch (e: Throwable) {
+            fail("Не удалось показать уведомление службы", e)
+            return
+        }
         try {
             stopEngines()
-            dpi = ByeDpi.start(this, MAIN_PORT, prefs.currentArgs())
+            val args = prefs.currentArgs()
+            AppLog.add("byedpi: $args")
+            dpi = ByeDpi.start(this, MAIN_PORT, args)
+            AppLog.add("byedpi слушает порт $MAIN_PORT")
 
             val builder = Builder()
                 .setSession(getString(R.string.app_name))
@@ -73,8 +82,9 @@ class ZapretVpnService : VpnService() {
                 // byedpi работает внутри приложения — его трафик идёт мимо VPN, иначе была бы петля
                 .addDisallowedApplication(packageName)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false)
-            val fd = builder.establish() ?: throw IllegalStateException("Нет разрешения на VPN")
+            val fd = builder.establish() ?: throw IllegalStateException("Нет разрешения на VPN — нажмите «Запустить» ещё раз")
             tun = fd
+            AppLog.add("VPN-интерфейс создан (fd ${fd.fd}), DNS ${prefs.dns}")
 
             val config = File(filesDir, "hev.yml")
             config.writeText(
@@ -95,18 +105,28 @@ class ZapretVpnService : VpnService() {
             if (!TProxyService.TProxyStartService(config.absolutePath, fd.fd)) {
                 throw IllegalStateException("Туннель не запустился")
             }
+            Thread.sleep(700)  // туннель стартует в своём потоке — убеждаемся, что он не упал сразу
+            if (!TProxyService.TProxyIsRunning()) throw IllegalStateException("Туннель остановился сразу после запуска")
+            if (dpi?.alive != true) throw IllegalStateException("byedpi остановился сразу после запуска")
+            AppLog.add("Туннель запущен, обход работает")
             VpnState.error.value = null
             VpnState.strategy.value = prefs.strategy
             VpnState.running.value = true
-        } catch (e: Exception) {
-            Log.e(TAG, "start failed", e)
-            VpnState.error.value = e.message ?: "Не удалось запустить обход"
-            stopVpn()
+        } catch (e: Throwable) {
+            // Throwable, а не Exception: ошибки загрузки библиотек (UnsatisfiedLinkError) — это Error
+            fail(e.message ?: "Не удалось запустить обход", e)
         }
     }
 
+    private fun fail(message: String, e: Throwable) {
+        Log.e(TAG, message, e)
+        AppLog.add("ОШИБКА: $message (${e.javaClass.simpleName})")
+        VpnState.error.value = message
+        stopVpn()
+    }
+
     private fun stopEngines() {
-        if (TProxyService.TProxyIsRunning()) TProxyService.TProxyStopService()
+        if (tun != null && TProxyService.TProxyIsRunning()) TProxyService.TProxyStopService()
         tun?.close()
         tun = null
         dpi?.stop()
@@ -116,7 +136,7 @@ class ZapretVpnService : VpnService() {
     private fun stopVpn(keepService: Boolean = false) {
         try {
             stopEngines()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.w(TAG, "stop", e)
         }
         VpnState.running.value = false

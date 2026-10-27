@@ -30,8 +30,8 @@ android {
         applicationId = "com.fuzik.zapret"
         minSdk = minApi
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
         ndk { abiFilters += abis }
         externalNativeBuild {
             ndkBuild {

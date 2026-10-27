@@ -133,9 +133,17 @@ fun ZapretApp(onStart: () -> Unit, onStop: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 Header()
+                val startError by VpnState.error.collectAsState()
+                if (startError != null && tab != 0) {
+                    ZCard {
+                        Text("Обход не запустился", color = Red, fontWeight = FontWeight.SemiBold)
+                        Text(startError!!, color = Muted, fontSize = 13.sp)
+                        TextButton(onClick = { tab = 2 }) { Text("Открыть журнал запуска", color = Accent) }
+                    }
+                }
                 when (tab) {
                     0 -> HomeScreen(prefs, onStart, onStop, update) { showUpdateDialog = true }
-                    1 -> CheckScreen(prefs, onStart)
+                    1 -> CheckScreen(prefs, onStart) { tab = 0 }
                     2 -> SettingsScreen(prefs, onUpdateFound = { update = it; showUpdateDialog = it != null })
                 }
             }
@@ -268,7 +276,10 @@ private fun HomeScreen(prefs: Prefs, onStart: () -> Unit, onStop: () -> Unit, up
             else "Выберите стратегию и нажмите «Запустить». Если сайты не открываются — попробуйте другую или подберите на вкладке «Проверка».",
             color = Muted, fontSize = 13.sp,
         )
-        if (error != null) Text(error!!, color = Red, fontSize = 13.sp)
+        if (error != null) {
+            Text("Не запустился: ${error!!}", color = Red, fontSize = 13.sp)
+            Text("Подробности — в «Настройках», раздел «Журнал запуска».", color = Muted, fontSize = 12.sp)
+        }
         Text("Стратегия", color = Muted, fontSize = 12.sp)
         Picker(strategy, STRATEGIES.map { it.name } + CUSTOM_STRATEGY) {
             strategy = it
@@ -296,7 +307,7 @@ private fun HomeScreen(prefs: Prefs, onStart: () -> Unit, onStop: () -> Unit, up
 // --- Проверка --------------------------------------------------------------
 
 @Composable
-private fun CheckScreen(prefs: Prefs, onStart: () -> Unit) {
+private fun CheckScreen(prefs: Prefs, onStart: () -> Unit, onApplied: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val running by VpnState.running.collectAsState()
@@ -380,7 +391,9 @@ private fun CheckScreen(prefs: Prefs, onStart: () -> Unit) {
             if (working.isNotEmpty()) {
                 BigButton("Применить «${working.first().strategy.name}»", modifier = Modifier.fillMaxWidth()) {
                     prefs.strategy = working.first().strategy.name
+                    VpnState.error.value = null
                     onStart()
+                    onApplied()  // показать результат запуска на «Главной»
                 }
             }
         }
@@ -443,6 +456,17 @@ private fun SettingsScreen(prefs: Prefs, onUpdateFound: (Updater.Update?) -> Uni
                 }
             }) { Text("Проверить", color = Accent) }
         }
+    }
+
+    ZCard("Журнал запуска") {
+        val log by AppLog.lines.collectAsState()
+        Text(if (log.isEmpty()) "Пока пусто — нажмите «Запустить» на главной" else log.takeLast(25).joinToString("\n"),
+            color = Muted, fontSize = 11.sp,
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(CardHi).padding(10.dp))
+        TextButton(enabled = log.isNotEmpty(), onClick = {
+            val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("zapret-log", AppLog.text()))
+        }) { Text("Скопировать журнал", color = Accent) }
     }
 
     ZCard("О программе") {

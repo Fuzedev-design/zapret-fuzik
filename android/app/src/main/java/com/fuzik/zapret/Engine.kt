@@ -77,14 +77,14 @@ class ByeDpi private constructor(private val process: Process, val port: Int) {
                 // после остановки процесса чтение падает с IOException — это нормально,
                 // но необработанная ошибка в потоке закрыла бы всё приложение
                 try {
-                    process.inputStream.bufferedReader().forEachLine { Log.d(TAG, it) }
+                    process.inputStream.bufferedReader().forEachLine { AppLog.add("byedpi:$port: $it") }
                 } catch (e: Exception) {
                     Log.d(TAG, "log closed: ${e.message}")
                 }
             }
             val dpi = ByeDpi(process, port)
             repeat(60) {
-                if (!dpi.alive) throw IllegalStateException("byedpi завершился: проверьте параметры стратегии")
+                if (!dpi.alive) throw IllegalStateException("byedpi завершился (код ${process.exitValue()}): проверьте параметры стратегии")
                 if (isListening(port)) return dpi
                 Thread.sleep(50)
             }
