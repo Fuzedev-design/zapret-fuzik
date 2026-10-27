@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
+import java.util.concurrent.Executors
 
 /** Состояние обхода для интерфейса. */
 object VpnState {
@@ -33,37 +34,44 @@ class ZapretVpnService : VpnService() {
     private var tun: ParcelFileDescriptor? = null
     private var dpi: ByeDpi? = null
 
+    // Запуск и остановка идут в отдельном потоке: на главном Android запрещает сетевые
+    // подключения, а мы проверяем, что byedpi начал слушать порт. Один поток — по очереди.
+    private val worker = Executors.newSingleThreadExecutor()
+
     override fun onCreate() {
         super.onCreate()
         CrashLog.install(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> stopVpn()
-            else -> startVpn()
+        if (intent?.action == ACTION_STOP) {
+            worker.execute { stopVpn() }
+            return START_NOT_STICKY
         }
+        val prefs = Prefs(this)
+        try {
+            // уведомление — сразу: после startForegroundService у службы всего несколько секунд
+            startInForeground(prefs.strategy)
+        } catch (e: Throwable) {
+            worker.execute { fail("Не удалось показать уведомление службы", e) }
+            return START_NOT_STICKY
+        }
+        worker.execute { startVpn(prefs) }
         return START_STICKY
     }
 
     override fun onRevoke() {
-        stopVpn()  // пользователь отключил VPN в настройках или включил другой VPN
+        worker.execute { stopVpn() }  // пользователь отключил VPN в настройках или включил другой VPN
     }
 
     override fun onDestroy() {
-        stopVpn(keepService = true)
+        worker.execute { stopVpn(keepService = true) }
+        worker.shutdown()
         super.onDestroy()
     }
 
-    private fun startVpn() {
-        val prefs = Prefs(this)
+    private fun startVpn(prefs: Prefs) {
         AppLog.add("Запуск: стратегия «${prefs.strategy}», Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}), ${Build.MANUFACTURER} ${Build.MODEL}")
-        try {
-            startInForeground(prefs.strategy)
-        } catch (e: Throwable) {
-            fail("Не удалось показать уведомление службы", e)
-            return
-        }
         try {
             stopEngines()
             val args = prefs.currentArgs()
