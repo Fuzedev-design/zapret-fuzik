@@ -26,6 +26,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 APP_NAME = "Запрет от Фузика"
+APP_VERSION = "1.1.0"
+SELF_REPO = "Fuzedev-design/zapret-fuzik"
+SELF_API_LATEST = f"https://api.github.com/repos/{SELF_REPO}/releases/latest"
+SELF_ASSET = "Zapret-ot-Fuzika.exe"
 REPO = "Flowseal/zapret-discord-youtube"
 API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 IPSET_URL = f"https://raw.githubusercontent.com/{REPO}/refs/heads/main/.service/ipset-service.txt"
@@ -82,6 +86,7 @@ def http_get(url, timeout=20):
 
 
 def version_key(v):
+    v = v.strip().lstrip("vV")  # теги релизов бывают и "v1.1.0", и "1.1.0"
     nums = [int(x) for x in re.findall(r"\d+", v)]
     nums += [0] * (4 - len(nums))
     return nums, re.sub(r"[\d.]", "", v)
@@ -510,6 +515,56 @@ def latest_tg_release():
     return json.loads(http_get(TG_API_LATEST, timeout=15))
 
 
+# --- Обновление самой программы --------------------------------------------
+
+def latest_self_release():
+    return json.loads(http_get(SELF_API_LATEST, timeout=15))
+
+
+def current_exe():
+    """Путь к exe программы; None, если запущены из исходников."""
+    return Path(sys.executable) if getattr(sys, "frozen", False) else None
+
+
+def cleanup_old_exe():
+    """Удаляет копию прошлой версии, оставшуюся после самообновления."""
+    exe = current_exe()
+    if exe:
+        exe.with_name(exe.name + ".old").unlink(missing_ok=True)
+
+
+def install_self_update(release, exe, log):
+    """Скачивает новую версию и подменяет exe.
+
+    Windows не даёт перезаписать запущенный exe, но разрешает его переименовать:
+    текущий файл становится .old (удаляется при следующем запуске), новый встаёт
+    на его место под тем же именем.
+    """
+    asset = next((a for a in release.get("assets", []) if a["name"] == SELF_ASSET), None)
+    if not asset:
+        raise RuntimeError(f"В релизе {release.get('tag_name')} нет файла {SELF_ASSET}")
+    log(f"Скачиваю {APP_NAME} {release['tag_name']} ({asset['size'] // (1024 * 1024)} МБ)...")
+    data = http_get(asset["browser_download_url"], timeout=300)
+    if len(data) != asset["size"]:
+        raise RuntimeError("Размер файла не совпадает, загрузка повреждена")
+    digest = asset.get("digest") or ""
+    if digest.startswith("sha256:") and hashlib.sha256(data).hexdigest() != digest.split(":", 1)[1]:
+        raise RuntimeError("Контрольная сумма не совпадает, файл повреждён или подменён")
+
+    exe = Path(exe)
+    new, old = exe.with_name(exe.name + ".new"), exe.with_name(exe.name + ".old")
+    new.write_bytes(data)
+    old.unlink(missing_ok=True)
+    os.replace(exe, old)
+    try:
+        os.replace(new, exe)
+    except OSError:
+        os.replace(old, exe)  # вернуть как было
+        raise
+    log(f"{APP_NAME} обновлён до {release['tag_name']}")
+    return exe
+
+
 def download_and_install(root, release, log):
     """Ставит или обновляет zapret в папке root. Пользовательские списки и настройки сохраняются."""
     asset = next((a for a in release.get("assets", []) if a["name"].lower().endswith(".zip")), None)
@@ -592,6 +647,10 @@ def main():
     except (OSError, AttributeError):
         pass
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Fuzik.Zapret")  # своя иконка на панели задач
+    try:
+        cleanup_old_exe()
+    except OSError:
+        pass  # прошлая копия ещё занята — удалим в другой раз
     from app_ui import App
     App().mainloop()
 

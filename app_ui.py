@@ -16,9 +16,10 @@ from PIL import ImageTk
 import ui_kit as ui
 from ui_kit import (ACCENT, BG, BLUE, CARD, CARD_HI, FONT, FONT_SEMI, GREEN, GREEN_SOFT, MUTED, RED,
                     RED_SOFT, SIDEBAR, TEXT, Button, Card, Dropdown, NavItem, Pill, Progress, Toggle, px)
-from zapret_fuzik import (APP_NAME, CHECK_TARGETS, DEFAULT_DIR, GAME_MODES, IPSET_MODES, PROBE_TEXT, SERVICE,
+from zapret_fuzik import (APP_NAME, APP_VERSION, CHECK_TARGETS, DEFAULT_DIR, GAME_MODES, IPSET_MODES, PROBE_TEXT, SERVICE,
                           TgProxy, Zapret, check_services, download_and_install, find_best_strategy, is_newer,
-                          latest_release, latest_tg_release, load_config, run, save_config)
+                          current_exe, install_self_update, latest_release, latest_self_release,
+                          latest_tg_release, load_config, run, save_config)
 
 ICON_HOME, ICON_TG, ICON_SETTINGS, ICON_TOOLS, ICON_CHECK = "", "", "", "", ""
 ICON_FOLDER, ICON_EDIT, ICON_SYNC, ICON_TEST, ICON_LINK = "", "", "", "", ""
@@ -63,7 +64,7 @@ class App(tk.Tk):
         self.cfg = load_config()
         self.z = self.tg = None
         self.busy = False
-        self.pending_release = self.pending_tg = None
+        self.pending_release = self.pending_tg = self.pending_self = None
         self.events = queue.Queue()
         self.controls = []
         self.polling = False
@@ -590,7 +591,7 @@ class App(tk.Tk):
         card.pack(fill="x", pady=(px(14), 0))
         self.var_updates = tk.BooleanVar()
         self.tgl_updates = setting_row(card.inner, "Проверять обновления при открытии",
-                                       "zapret и TG WS Proxy с GitHub",
+                                       "Программа, zapret и TG WS Proxy с GitHub",
                                        lambda r: Toggle(r, self.var_updates, self.on_updates_toggle), first=True)
         self.btn_change_dir = setting_row(card.inner, "Папка zapret", str(self.z.root),
                                           lambda r: Button(r, "Сменить", lambda: self.show_setup(can_cancel=True),
@@ -648,20 +649,17 @@ class App(tk.Tk):
 
     def update_versions(self):
         tg = self.tg.version() if self.tg.installed() else "не установлен"
-        self.lbl_side_ver.configure(text=f"zapret {self.z.version()}\nTG WS Proxy {tg}")
-        if self.pending_release or self.pending_tg:
-            parts = []
-            if self.pending_release:
-                parts.append(f"zapret {self.pending_release['tag_name']}")
-            if self.pending_tg:
-                parts.append(f"TG WS Proxy {self.pending_tg['tag_name']}")
+        self.lbl_side_ver.configure(text=f"Программа {APP_VERSION}\nzapret {self.z.version()}\nTG WS Proxy {tg}")
+        pending = [(self.pending_self, "Программа"), (self.pending_release, "zapret"), (self.pending_tg, "TG WS Proxy")]
+        parts = [f"{name} {rel['tag_name']}" for rel, name in pending if rel]
+        if parts:
             self.lbl_version.configure(text="Доступно обновление", fg=BLUE)
             self.lbl_version2.configure(text=", ".join(parts))
             self.btn_update.configure(text="Обновить", kind="primary")
             self.btn_side_update.pack(fill="x", pady=(px(10), 0))
         else:
             self.lbl_version.configure(text="Установлены последние версии" if self.checked else "Версии", fg=TEXT)
-            self.lbl_version2.configure(text=f"zapret {self.z.version()} · TG WS Proxy {tg}")
+            self.lbl_version2.configure(text=f"Программа {APP_VERSION} · zapret {self.z.version()} · TG WS Proxy {tg}")
             self.btn_update.configure(text="Проверить", kind="secondary")
             self.btn_side_update.pack_forget()
 
@@ -869,8 +867,11 @@ class App(tk.Tk):
         self.write_log("Прокси Telegram: автозапуск " + ("включён" if self.var_tg_auto.get() else "выключен"))
 
     # --- Обновления ---
+    def has_updates(self):
+        return bool(self.pending_release or self.pending_tg or self.pending_self)
+
     def on_update(self):
-        if self.pending_release or self.pending_tg:
+        if self.has_updates():
             self.do_update()
         else:
             self.check_updates()
@@ -880,32 +881,38 @@ class App(tk.Tk):
         tg_local = self.tg.version() if self.tg.installed() else None
         self.lbl_version.configure(text="Проверяю обновления...", fg=TEXT)
 
+        def optional(fetch):
+            try:
+                return fetch()
+            except Exception:  # noqa: BLE001 — сбой одной проверки не мешает остальным
+                return None
+
         def job():
             rel = latest_release()
-            tg_rel = None
-            if tg_local:
-                try:
-                    tg_rel = latest_tg_release()
-                except Exception:  # noqa: BLE001 — не мешаем обновлению zapret
-                    pass
-            return rel, tg_rel
+            tg_rel = optional(latest_tg_release) if tg_local else None
+            self_rel = optional(latest_self_release)
+            return rel, tg_rel, self_rel
 
         def done(result):
-            rel, tg_rel = result
+            rel, tg_rel, self_rel = result
             self.checked = True
             self.pending_release = rel if is_newer(rel["tag_name"], local) else None
             self.pending_tg = tg_rel if tg_rel and is_newer(tg_rel["tag_name"], tg_local) else None
+            self.pending_self = self_rel if self_rel and is_newer(self_rel["tag_name"], APP_VERSION) else None
             self.update_versions()
             news = []
+            if self.pending_self:
+                news.append(f"• {APP_NAME} {self_rel['tag_name'].lstrip('v')} (у вас {APP_VERSION})")
             if self.pending_release:
                 news.append(f"• zapret {rel['tag_name']} (у вас {local})")
             if self.pending_tg:
                 news.append(f"• TG WS Proxy {tg_rel['tag_name']} (у вас {tg_local})")
             if news:
                 self.write_log("Доступны обновления: " + "; ".join(n[2:] for n in news))
+                extra = "\nПосле обновления программа перезапустится сама." if self.pending_self else ""
                 if messagebox.askyesno(APP_NAME, "Вышли новые версии:\n" + "\n".join(news) +
                                        "\n\nОбновить сейчас? Ваши списки, настройки и подключение "
-                                       "Telegram сохранятся.", parent=self):
+                                       "Telegram сохранятся." + extra, parent=self):
                     self.after(10, self.do_update)
             elif not silent:
                 self.write_log("У вас последние версии")
@@ -913,9 +920,10 @@ class App(tk.Tk):
         self.task("Проверка обновлений", job, done)
 
     def do_update(self):
-        rel, tg_rel = self.pending_release, self.pending_tg
-        if not rel and not tg_rel:
+        rel, tg_rel, self_rel = self.pending_release, self.pending_tg, self.pending_self
+        if not (rel or tg_rel or self_rel):
             return
+        exe = current_exe()
 
         def job():
             if rel:
@@ -931,11 +939,24 @@ class App(tk.Tk):
                     self.log("Обход перезапущен")
             if tg_rel:
                 self.tg.install(tg_rel, self.log)
+            # саму программу обновляем последней: после неё нужен перезапуск
+            if self_rel and exe:
+                return install_self_update(self_rel, exe, self.log)
+            return None
 
-        def done(_):
-            self.pending_release = self.pending_tg = None
+        def done(new_exe):
+            self.pending_release = self.pending_tg = self.pending_self = None
             self.fill_strategies()
             self.update_versions()
+            if new_exe:
+                messagebox.showinfo(APP_NAME, f"{APP_NAME} обновлён до {self_rel['tag_name'].lstrip('v')}. "
+                                              "Сейчас программа перезапустится.", parent=self)
+                subprocess.Popen([str(new_exe)], cwd=str(new_exe.parent))
+                self.destroy()
+                return
+            if self_rel and not exe:
+                # запуск из исходников — подменять нечего, открываем страницу релиза
+                os.startfile(self_rel["html_url"])
             self.write_log("Обновление завершено")
 
         self.task("Обновление", job, done)
