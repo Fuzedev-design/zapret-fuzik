@@ -75,8 +75,8 @@ class ZapretVpnService : VpnService() {
         try {
             stopEngines()
             val args = prefs.currentArgs()
-            AppLog.add("byedpi: $args")
-            dpi = ByeDpi.start(this, MAIN_PORT, args)
+            AppLog.add("byedpi: $args${if (prefs.blockQuic) " (QUIC заблокирован)" else ""}")
+            dpi = ByeDpi.start(this, MAIN_PORT, args, dropQuic = prefs.blockQuic)
             AppLog.add("byedpi слушает порт $MAIN_PORT")
 
             val builder = Builder()

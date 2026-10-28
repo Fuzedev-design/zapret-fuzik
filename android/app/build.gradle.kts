@@ -30,8 +30,8 @@ android {
         applicationId = "com.fuzik.zapret"
         minSdk = minApi
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.1.1"
+        versionCode = 7
+        versionName = "1.2.0"
         ndk { abiFilters += abis }
         externalNativeBuild {
             ndkBuild {
@@ -89,12 +89,42 @@ val clangTriple = mapOf(
 )
 val byedpiSources = listOf("packets.c", "main.c", "conev.c", "proxy.c", "desync.c", "mpool.c", "extend.c")
 
+// Наша правка byedpi: при ZAPRET_DROP_QUIC=1 UDP-пакеты на порт 443 (QUIC) не пересылаются.
+// Приложения (YouTube) тогда сразу переходят на TCP, где обход DPI работает.
+// Правка накладывается на копию исходников — подмодуль остаётся как у автора.
+val quicMarker = """
+            int offs = s5_get_addr(data, n, &addr, SOCK_DGRAM);
+            if (offs < 0) {
+                LOG(LOG_E, "udp parse error\n");
+                return -1;
+            }
+""".trimStart('\n')
+val quicPatch = quicMarker + """
+            static int drop_quic = -1;
+            if (drop_quic < 0) {
+                drop_quic = getenv("ZAPRET_DROP_QUIC") != NULL;
+            }
+            if (drop_quic && ntohs(addr.in.sin_port) == 443) {
+                continue;
+            }
+""".trimStart('\n')
+
 val buildByedpi by tasks.registering {
     description = "Собирает byedpi (ciadpi) через NDK"
     inputs.files(byedpiSources.map { byedpiDir.resolve(it) })
+    inputs.property("quicPatch", quicPatch)
     val outRoot = layout.buildDirectory.dir("byedpi")
+    val srcCopy = layout.buildDirectory.dir("byedpi-src")
     outputs.dir(outRoot)
     doLast {
+        val src = srcCopy.get().asFile
+        src.deleteRecursively()
+        byedpiDir.copyRecursively(src)
+        val proxy = src.resolve("proxy.c")
+        val code = proxy.readText().replace("\r\n", "\n")
+        if (!code.contains(quicMarker)) throw GradleException("byedpi: не найдено место для правки QUIC — проверьте версию")
+        proxy.writeText(code.replace(quicMarker, quicPatch))
+
         val ndk = android.ndkDirectory
         val host = if (System.getProperty("os.name").startsWith("Windows")) "windows-x86_64" else "linux-x86_64"
         val ext = if (host.startsWith("windows")) ".cmd" else ""
@@ -102,9 +132,9 @@ val buildByedpi by tasks.registering {
             val clang = ndk.resolve("toolchains/llvm/prebuilt/$host/bin/${clangTriple[abi]}$minApi-clang$ext")
             val out = outRoot.get().asFile.resolve("$abi/libciadpi.so")
             out.parentFile.mkdirs()
-            val cmd = listOf(clang.absolutePath, "-D_DEFAULT_SOURCE", "-I", byedpiDir.absolutePath,
+            val cmd = listOf(clang.absolutePath, "-D_DEFAULT_SOURCE", "-I", src.absolutePath,
                 "-std=c99", "-O2", "-Wno-unused", "-fPIE", "-pie", "-s", "-o", out.absolutePath) +
-                byedpiSources.map { byedpiDir.resolve(it).absolutePath }
+                byedpiSources.map { src.resolve(it).absolutePath }
             val proc = ProcessBuilder(cmd).redirectErrorStream(true).start()
             val log = proc.inputStream.bufferedReader().readText()
             if (proc.waitFor() != 0) throw GradleException("byedpi ($abi) не собрался:\n$log")

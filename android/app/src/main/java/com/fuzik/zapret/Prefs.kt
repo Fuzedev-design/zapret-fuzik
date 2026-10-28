@@ -26,6 +26,14 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("ipv6", false)
         set(v) = sp.edit().putBoolean("ipv6", v).apply()
 
+    /**
+     * Не пропускать QUIC (UDP на порт 443). Приложение YouTube тогда сразу переходит
+     * на обычное TCP-соединение, где обход работает надёжнее.
+     */
+    var blockQuic: Boolean
+        get() = sp.getBoolean("block_quic", true)
+        set(v) = sp.edit().putBoolean("block_quic", v).apply()
+
     var autostart: Boolean
         get() = sp.getBoolean("autostart", false)
         set(v) = sp.edit().putBoolean("autostart", v).apply()

@@ -86,10 +86,13 @@ class ByeDpi private constructor(private val process: Process, val port: Int) {
         fun exe(ctx: Context) = File(ctx.applicationInfo.nativeLibraryDir, "libciadpi.so")
 
         /** Запускает byedpi и ждёт, пока он начнёт принимать подключения. */
-        fun start(ctx: Context, port: Int, args: String): ByeDpi {
+        fun start(ctx: Context, port: Int, args: String, dropQuic: Boolean = false): ByeDpi {
             if (isListening(port)) throw IllegalStateException("Порт $port занят")
             val cmd = listOf(exe(ctx).absolutePath, "-i", "127.0.0.1", "-p", port.toString()) + splitArgs(args)
-            val process = ProcessBuilder(cmd).redirectErrorStream(true).start()
+            val pb = ProcessBuilder(cmd).redirectErrorStream(true)
+            // наша правка byedpi (см. app/build.gradle.kts): не пересылать UDP на порт 443
+            if (dropQuic) pb.environment()["ZAPRET_DROP_QUIC"] = "1"
+            val process = pb.start()
             thread(isDaemon = true, name = "byedpi-log-$port") {
                 // после остановки процесса чтение падает с IOException — это нормально,
                 // но необработанная ошибка в потоке закрыла бы всё приложение
