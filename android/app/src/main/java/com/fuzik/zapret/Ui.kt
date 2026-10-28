@@ -354,7 +354,7 @@ private fun CheckScreen(prefs: Prefs, onStart: () -> Unit, onApplied: () -> Unit
 
     ZCard {
         Text("Подбор стратегии", color = TextMain, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-        Text(if (searching) progressText else "Перепробует все стратегии (около минуты) и найдёт лучшую. Обход при этом не прерывается.",
+        Text(if (searching) progressText else "Перепробует ${STRATEGIES.size} стратегий (1–2 минуты) и найдёт ту, при которой работают Discord, YouTube с видео и Telegram. Обход при этом не прерывается.",
             color = Muted, fontSize = 12.sp)
         if (searching) {
             LinearProgressIndicator(progress = { progress }, color = Accent, trackColor = CardHi,
@@ -369,7 +369,7 @@ private fun CheckScreen(prefs: Prefs, onStart: () -> Unit, onApplied: () -> Unit
             scope.launch {
                 best = Checker.findBest(ctx, { i, n, name ->
                     progress = i.toFloat() / n
-                    progressText = "Проверяю ${i + 1} из $n: $name"
+                    progressText = "Проверяю ${i + 1}–${minOf(i + 4, n)} из $n: $name"
                 }, { cancel })
                 searching = false
             }

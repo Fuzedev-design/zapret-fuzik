@@ -17,13 +17,19 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
 /** Те же адреса, что в проверке Windows-версии. */
+// Видеосерверы YouTube (googlevideo) проверяются отдельно: сайт может открываться,
+// а видео — нет, если провайдер режет именно их.
 val CHECK_TARGETS = linkedMapOf(
     "Discord" to listOf("discord.com", "gateway.discord.gg", "cdn.discordapp.com", "updates.discord.com"),
-    "YouTube" to listOf("www.youtube.com", "i.ytimg.com", "redirector.googlevideo.com", "youtu.be"),
-    "Telegram" to listOf("telegram.org", "web.telegram.org"),
+    "YouTube" to listOf("www.youtube.com", "i.ytimg.com", "youtubei.googleapis.com", "yt3.ggpht.com"),
+    "Видео YouTube" to listOf(
+        "redirector.googlevideo.com", "manifest.googlevideo.com",
+        "rr1---sn-4axm-n8vs.googlevideo.com", "rr4---sn-q4flrnsl.googlevideo.com", "rr2---sn-q4fl6ndl.googlevideo.com",
+    ),
+    "Telegram" to listOf("telegram.org", "web.telegram.org", "core.telegram.org", "t.me"),
     "Google и Cloudflare" to listOf("www.google.com", "www.gstatic.com", "www.cloudflare.com", "cdnjs.cloudflare.com"),
 )
-val STRATEGY_SERVICES = listOf("Discord", "YouTube", "Google и Cloudflare")
+val STRATEGY_SERVICES = listOf("Discord", "YouTube", "Видео YouTube", "Telegram", "Google и Cloudflare")
 
 enum class Probe(val text: String) {
     OK("доступен"), TIMEOUT("нет ответа"), RESET("соединение сброшено"),
@@ -87,6 +93,23 @@ object Checker {
         return Triple(ok.size, all.size, if (ok.isEmpty()) null else ok.sum() / ok.size)
     }
 
+    private suspend fun testStrategy(ctx: Context, st: Strategy, port: Int): StrategyScore {
+        val dpi = try {
+            ByeDpi.start(ctx, port, st.args)
+        } catch (e: Exception) {
+            AppLog.add("Подбор: «${st.name}» не запустилась — ${e.message}")
+            return StrategyScore(st, 0, 0, null)
+        }
+        return try {
+            val (ok, total, ms) = summarize(checkServices(STRATEGY_SERVICES, port, 4000))
+            StrategyScore(st, ok, total, ms)
+        } catch (e: Exception) {
+            StrategyScore(st, 0, 0, null)
+        } finally {
+            dpi.stop()
+        }
+    }
+
     /**
      * Перебирает стратегии на отдельном порту — работающий обход при этом не прерывается.
      * Лучшие идут первыми.
@@ -97,25 +120,17 @@ object Checker {
         isCancelled: () -> Boolean,
     ): List<StrategyScore> = withContext(Dispatchers.IO) {
         val scores = mutableListOf<StrategyScore>()
-        for ((i, st) in STRATEGIES.withIndex()) {
+        // по 4 стратегии одновременно, у каждой свой порт — так подбор в разы быстрее
+        val batch = 4
+        for (start in STRATEGIES.indices step batch) {
             if (isCancelled()) break
+            val group = STRATEGIES.subList(start, minOf(start + batch, STRATEGIES.size))
             // состояние интерфейса меняем только из главного потока
-            withContext(Dispatchers.Main) { onProgress(i, STRATEGIES.size, st.name) }
-            // у каждой стратегии свой порт: прошлый процесс мог ещё не освободить свой
-            val port = TEST_PORT + i
-            val dpi = try {
-                ByeDpi.start(ctx, port, st.args)
-            } catch (e: Exception) {
-                scores += StrategyScore(st, 0, 0, null)
-                continue
+            withContext(Dispatchers.Main) {
+                onProgress(start, STRATEGIES.size, group.joinToString(", ") { it.name })
             }
-            try {
-                val (ok, total, ms) = summarize(checkServices(STRATEGY_SERVICES, port, 4000))
-                scores += StrategyScore(st, ok, total, ms)
-            } catch (e: Exception) {
-                scores += StrategyScore(st, 0, 0, null)
-            } finally {
-                dpi.stop()
+            scores += coroutineScope {
+                group.mapIndexed { j, st -> async { testStrategy(ctx, st, TEST_PORT + start + j) } }.awaitAll()
             }
         }
         scores.sortedWith(compareBy({ -it.ok }, { it.ms ?: Long.MAX_VALUE }))
