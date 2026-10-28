@@ -61,7 +61,7 @@
 Нужен Python 3.12+ с tkinter.
 
 ```bash
-pip install pillow pyinstaller
+pip install pillow truststore pyinstaller
 build.bat
 ```
 

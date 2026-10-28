@@ -19,6 +19,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 import winreg
 import zipfile
@@ -26,7 +27,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 APP_NAME = "Запрет от Фузика"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 SELF_REPO = "Fuzedev-design/zapret-fuzik"
 SELF_API_LATEST = f"https://api.github.com/repos/{SELF_REPO}/releases/latest"
 SELF_ASSET = "Zapret-ot-Fuzika.exe"
@@ -79,9 +80,34 @@ def run(args, check=False):
     return r
 
 
+def tls_context():
+    """Проверка сертификатов средствами Windows, как в браузере: недостающие
+    корневые сертификаты система догрузит сама."""
+    try:
+        import truststore
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except Exception:
+        return ssl.create_default_context()
+
+
 def http_get(url, timeout=20):
-    req = urllib.request.Request(url, headers={"User-Agent": "ZapretFuzik"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    ctx = tls_context()
+
+    def make_req():
+        return urllib.request.Request(url, headers={"User-Agent": "ZapretFuzik"})
+    try:
+        with urllib.request.urlopen(make_req(), timeout=timeout, context=ctx) as r:
+            return r.read()
+    except urllib.error.HTTPError:
+        raise
+    except (urllib.error.URLError, OSError):
+        # В Windows может остаться включённым прокси от выключенного VPN
+        # (например, 127.0.0.1:10809) — тогда пробуем напрямую, без прокси.
+        if not urllib.request.getproxies():
+            raise
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                                         urllib.request.HTTPSHandler(context=ctx))
+    with direct.open(make_req(), timeout=timeout) as r:
         return r.read()
 
 
@@ -444,7 +470,7 @@ def probe(host, timeout=5):
     """HTTPS-запрос к сайту: ('ok' | причина ошибки, время в мс)."""
     t0 = time.perf_counter()
     try:
-        ctx = ssl.create_default_context()
+        ctx = tls_context()
         with socket.create_connection((host, 443), timeout=timeout) as sock:
             with ctx.wrap_socket(sock, server_hostname=host) as tls:
                 tls.sendall(f"HEAD / HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Mozilla/5.0\r\n"
