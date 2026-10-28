@@ -17,6 +17,15 @@ class Prefs(ctx: Context) {
         get() = sp.getString("dns", "8.8.8.8")!!
         set(v) = sp.edit().putString("dns", v).apply()
 
+    /**
+     * IPv6 через обход. Выключен по умолчанию: у большинства операторов IPv6 нет, а если
+     * VPN его объявляет, приложения (YouTube, Telegram) упираются в нерабочий IPv6.
+     * Без IPv6-маршрута Android сам блокирует IPv6, и приложения сразу идут по IPv4.
+     */
+    var ipv6: Boolean
+        get() = sp.getBoolean("ipv6", false)
+        set(v) = sp.edit().putBoolean("ipv6", v).apply()
+
     var autostart: Boolean
         get() = sp.getBoolean("autostart", false)
         set(v) = sp.edit().putBoolean("autostart", v).apply()

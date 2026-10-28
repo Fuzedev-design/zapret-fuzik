@@ -84,15 +84,15 @@ class ZapretVpnService : VpnService() {
                 .setMtu(MTU)
                 .addAddress("10.10.10.10", 32)
                 .addRoute("0.0.0.0", 0)
-                .addAddress("fd00::1", 128)
-                .addRoute("::", 0)
                 .addDnsServer(prefs.dns)
+            if (prefs.ipv6) builder.addAddress("fd00::1", 128).addRoute("::", 0)
+            builder
                 // byedpi работает внутри приложения — его трафик идёт мимо VPN, иначе была бы петля
                 .addDisallowedApplication(packageName)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false)
             val fd = builder.establish() ?: throw IllegalStateException("Нет разрешения на VPN — нажмите «Запустить» ещё раз")
             tun = fd
-            AppLog.add("VPN-интерфейс создан (fd ${fd.fd}), DNS ${prefs.dns}")
+            AppLog.add("VPN-интерфейс создан (fd ${fd.fd}), DNS ${prefs.dns}, IPv6 ${if (prefs.ipv6) "вкл" else "выкл"}")
 
             val config = File(filesDir, "hev.yml")
             config.writeText(
@@ -100,7 +100,7 @@ class ZapretVpnService : VpnService() {
                 tunnel:
                   mtu: $MTU
                   ipv4: 10.10.10.10
-                  ipv6: 'fd00::1'
+                  ${if (prefs.ipv6) "ipv6: 'fd00::1'" else ""}
                 socks5:
                   port: $MAIN_PORT
                   address: 127.0.0.1

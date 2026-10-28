@@ -409,6 +409,7 @@ private fun SettingsScreen(prefs: Prefs, onUpdateFound: (Updater.Update?) -> Uni
     val running by VpnState.running.collectAsState()
     var custom by remember { mutableStateOf(prefs.customArgs) }
     var dns by remember { mutableStateOf(prefs.dns) }
+    var ipv6 by remember { mutableStateOf(prefs.ipv6) }
     var checkUpdates by remember { mutableStateOf(prefs.checkUpdates) }
     var updateText by remember { mutableStateOf<String?>(null) }
 
@@ -435,6 +436,13 @@ private fun SettingsScreen(prefs: Prefs, onUpdateFound: (Updater.Update?) -> Uni
             dns = it
             prefs.dns = it
             if (running) ZapretVpnService.start(ctx)
+        }
+        SettingRow("IPv6", "Включайте, только если у оператора есть IPv6. Если приложения не грузятся — выключите") {
+            ZSwitch(ipv6) {
+                ipv6 = it
+                prefs.ipv6 = it
+                if (running) ZapretVpnService.start(ctx)
+            }
         }
     }
 
