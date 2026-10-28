@@ -34,6 +34,14 @@ class Prefs(ctx: Context) {
         get() = sp.getBoolean("block_quic", true)
         set(v) = sp.edit().putBoolean("block_quic", v).apply()
 
+    /**
+     * Приложение Telegram через WebSocket (как TG WS Proxy). Провайдеры блокируют адреса
+     * серверов Telegram целиком, и byedpi тут бессилен — нужен обходной путь.
+     */
+    var tgWs: Boolean
+        get() = sp.getBoolean("tg_ws", true)
+        set(v) = sp.edit().putBoolean("tg_ws", v).apply()
+
     var autostart: Boolean
         get() = sp.getBoolean("autostart", false)
         set(v) = sp.edit().putBoolean("autostart", v).apply()

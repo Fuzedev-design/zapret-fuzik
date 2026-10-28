@@ -41,6 +41,8 @@ val STRATEGIES = listOf(
 const val CUSTOM_STRATEGY = "Своя"
 const val MAIN_PORT = 1080
 const val TEST_PORT = 1081
+/** byedpi за распределителем, когда Telegram идёт через WebSocket. */
+const val DPI_PORT = 1079
 
 /** Разбивает строку параметров на аргументы с учётом кавычек. */
 fun splitArgs(s: String): List<String> {

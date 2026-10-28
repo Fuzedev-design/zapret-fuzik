@@ -411,6 +411,7 @@ private fun SettingsScreen(prefs: Prefs, onUpdateFound: (Updater.Update?) -> Uni
     var dns by remember { mutableStateOf(prefs.dns) }
     var ipv6 by remember { mutableStateOf(prefs.ipv6) }
     var blockQuic by remember { mutableStateOf(prefs.blockQuic) }
+    var tgWs by remember { mutableStateOf(prefs.tgWs) }
     var checkUpdates by remember { mutableStateOf(prefs.checkUpdates) }
     var updateText by remember { mutableStateOf<String?>(null) }
 
@@ -442,6 +443,13 @@ private fun SettingsScreen(prefs: Prefs, onUpdateFound: (Updater.Update?) -> Uni
             ZSwitch(blockQuic) {
                 blockQuic = it
                 prefs.blockQuic = it
+                if (running) ZapretVpnService.start(ctx)
+            }
+        }
+        SettingRow("Telegram через WebSocket", "Для приложения Telegram, как TG WS Proxy в Windows-версии: его серверы заблокированы по адресам, и обычный обход не помогает") {
+            ZSwitch(tgWs) {
+                tgWs = it
+                prefs.tgWs = it
                 if (running) ZapretVpnService.start(ctx)
             }
         }

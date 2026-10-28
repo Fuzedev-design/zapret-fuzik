@@ -34,6 +34,9 @@ val CHECK_TARGETS = linkedMapOf(
         "https://i.ytimg.com/vi/9bZkp7q19f0/maxresdefault.jpg",
     ),
     "Telegram" to listOf("telegram.org", "web.telegram.org", "core.telegram.org", "t.me"),
+    // Серверы самого приложения Telegram (5 дата-центров) — по пути через WebSocket.
+    // От стратегии byedpi не зависит, поэтому в подборе не участвует.
+    "Приложение Telegram" to listOf("tg:2", "tg:4", "tg:1", "tg:3", "tg:5"),
     "Google и Cloudflare" to listOf("www.google.com", "www.gstatic.com", "www.cloudflare.com", "cdnjs.cloudflare.com"),
 )
 val STRATEGY_SERVICES = listOf("Discord", "YouTube", "Видео YouTube", "Загрузка с YouTube", "Telegram", "Google и Cloudflare")
@@ -58,6 +61,14 @@ object Checker {
      */
     fun probe(target: String, socksPort: Int?, timeoutMs: Int = 5000): ProbeResult {
         if (target.startsWith("https://")) return download(target, socksPort, timeoutMs)
+        if (target.startsWith("tg:")) {
+            val dc = target.removePrefix("tg:").toInt()
+            return try {
+                ProbeResult("DC$dc", Probe.OK, Telegram.probe(dc))
+            } catch (e: Exception) {
+                ProbeResult("DC$dc", Probe.TIMEOUT, null)
+            }
+        }
         val host = target
         val t0 = System.nanoTime()
         return try {

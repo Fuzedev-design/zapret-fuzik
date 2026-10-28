@@ -30,8 +30,8 @@ android {
         applicationId = "com.fuzik.zapret"
         minSdk = minApi
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.2.1"
+        versionCode = 9
+        versionName = "1.3.0"
         ndk { abiFilters += abis }
         externalNativeBuild {
             ndkBuild {
@@ -75,6 +75,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    // в проверках на компьютере вызовы android.util.Log просто ничего не делают
+    testOptions { unitTests.isReturnDefaultValues = true }
     buildFeatures {
         compose = true
         buildConfig = true
@@ -177,4 +179,5 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    testImplementation("junit:junit:4.13.2")
 }

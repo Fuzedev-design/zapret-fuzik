@@ -33,6 +33,7 @@ class ZapretVpnService : VpnService() {
 
     private var tun: ParcelFileDescriptor? = null
     private var dpi: ByeDpi? = null
+    private var front: Front? = null
 
     // Запуск и остановка идут в отдельном потоке: на главном Android запрещает сетевые
     // подключения, а мы проверяем, что byedpi начал слушать порт. Один поток — по очереди.
@@ -76,8 +77,16 @@ class ZapretVpnService : VpnService() {
             stopEngines()
             val args = prefs.currentArgs()
             AppLog.add("byedpi: $args${if (prefs.blockQuic) " (QUIC заблокирован)" else ""}")
-            dpi = ByeDpi.start(this, MAIN_PORT, args, dropQuic = prefs.blockQuic)
-            AppLog.add("byedpi слушает порт $MAIN_PORT")
+            // с Telegram через WebSocket туннель идёт в наш распределитель, а byedpi — за ним
+            val dpiPort = if (prefs.tgWs) DPI_PORT else MAIN_PORT
+            dpi = ByeDpi.start(this, dpiPort, args, dropQuic = prefs.blockQuic)
+            AppLog.add("byedpi слушает порт $dpiPort")
+            if (prefs.tgWs) {
+                Telegram.resetLog()
+                front = Front.start(MAIN_PORT, DPI_PORT)
+                AppLog.add("Telegram через WebSocket включён")
+                spawn("tg-domains") { Telegram.refreshDomains() }
+            }
 
             val builder = Builder()
                 .setSession(getString(R.string.app_name))
@@ -137,6 +146,8 @@ class ZapretVpnService : VpnService() {
         if (tun != null && TProxyService.TProxyIsRunning()) TProxyService.TProxyStopService()
         tun?.close()
         tun = null
+        front?.stop()
+        front = null
         dpi?.stop()
         dpi = null
     }
