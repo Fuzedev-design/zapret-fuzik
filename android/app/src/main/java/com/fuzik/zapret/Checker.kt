@@ -26,23 +26,39 @@ val CHECK_TARGETS = linkedMapOf(
         "redirector.googlevideo.com", "manifest.googlevideo.com",
         "rr1---sn-4axm-n8vs.googlevideo.com", "rr4---sn-q4flrnsl.googlevideo.com", "rr2---sn-q4fl6ndl.googlevideo.com",
     ),
+    // Настоящая загрузка: провайдеры часто пропускают первые 16–20 КБ и «замораживают»
+    // соединение. Короткий запрос это не ловит, а видео из-за этого не играет.
+    "Загрузка с YouTube" to listOf(
+        "https://www.youtube.com/",
+        "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/9bZkp7q19f0/maxresdefault.jpg",
+    ),
     "Telegram" to listOf("telegram.org", "web.telegram.org", "core.telegram.org", "t.me"),
     "Google и Cloudflare" to listOf("www.google.com", "www.gstatic.com", "www.cloudflare.com", "cdnjs.cloudflare.com"),
 )
-val STRATEGY_SERVICES = listOf("Discord", "YouTube", "Видео YouTube", "Telegram", "Google и Cloudflare")
+val STRATEGY_SERVICES = listOf("Discord", "YouTube", "Видео YouTube", "Загрузка с YouTube", "Telegram", "Google и Cloudflare")
+
+/** Сколько данных нужно получить, чтобы считать загрузку рабочей (с запасом над 16–20 КБ). */
+private const val DOWNLOAD_BYTES = 64 * 1024
 
 enum class Probe(val text: String) {
     OK("доступен"), TIMEOUT("нет ответа"), RESET("соединение сброшено"),
-    DNS("адрес не найден (DNS)"), CERT("подмена сертификата"), ERROR("ошибка")
+    DNS("адрес не найден (DNS)"), CERT("подмена сертификата"), ERROR("ошибка"),
+    STALL("загрузка замирает на 16–20 КБ")
 }
 
 data class ProbeResult(val host: String, val status: Probe, val ms: Long?)
-data class StrategyScore(val strategy: Strategy, val ok: Int, val total: Int, val ms: Long?)
+data class StrategyScore(val strategy: Strategy, val ok: Int, val total: Int, val ms: Long?, val downloadsOk: Int = 0)
 
 object Checker {
 
-    /** HTTPS-запрос к сайту напрямую или через byedpi на указанном порту. */
-    fun probe(host: String, socksPort: Int?, timeoutMs: Int = 5000): ProbeResult {
+    /**
+     * HTTPS-проверка напрямую или через byedpi на указанном порту.
+     * Цель «хост» — короткий запрос; цель «https://…» — настоящая загрузка от 64 КБ.
+     */
+    fun probe(target: String, socksPort: Int?, timeoutMs: Int = 5000): ProbeResult {
+        if (target.startsWith("https://")) return download(target, socksPort, timeoutMs)
+        val host = target
         val t0 = System.nanoTime()
         return try {
             val raw = if (socksPort != null) Socket(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", socksPort)))
@@ -75,6 +91,66 @@ object Checker {
         }
     }
 
+    private fun download(url: String, socksPort: Int?, timeoutMs: Int): ProbeResult {
+        val host = url.removePrefix("https://").substringBefore('/')
+        val path = "/" + url.removePrefix("https://").substringAfter('/', "")
+        val t0 = System.nanoTime()
+        var received = 0
+        return try {
+            val raw = if (socksPort != null) Socket(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", socksPort)))
+            else Socket()
+            raw.use { s ->
+                val addr = if (socksPort != null) InetSocketAddress.createUnresolved(host, 443) else InetSocketAddress(host, 443)
+                s.connect(addr, timeoutMs)
+                s.soTimeout = timeoutMs
+                val tls = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(s, host, 443, true) as SSLSocket
+                tls.use {
+                    it.startHandshake()
+                    it.outputStream.write(("GET $path HTTP/1.1\r\nHost: $host\r\n" +
+                        "User-Agent: Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36\r\n" +
+                        "Accept-Encoding: identity\r\nConnection: close\r\n\r\n").toByteArray())
+                    val input = it.inputStream
+                    val buf = ByteArray(16 * 1024)
+                    val head = StringBuilder()
+                    var need = DOWNLOAD_BYTES
+                    var bodyStart = -1
+                    val deadline = System.nanoTime() + 10_000_000_000L
+                    while (System.nanoTime() < deadline) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        received += n
+                        if (bodyStart < 0) {
+                            head.append(String(buf, 0, n, Charsets.ISO_8859_1))
+                            val end = head.indexOf("\r\n\r\n")
+                            if (end >= 0) {
+                                bodyStart = end + 4
+                                val len = Regex("(?i)content-length:\\s*(\\d+)").find(head.substring(0, end))
+                                    ?.groupValues?.get(1)?.toIntOrNull()
+                                // файл меньше 64 КБ — достаточно получить его целиком
+                                if (len != null) need = minOf(need, len)
+                            }
+                        }
+                        if (bodyStart >= 0 && received - bodyStart >= need) {
+                            return@use ProbeResult(url, Probe.OK, (System.nanoTime() - t0) / 1_000_000)
+                        }
+                    }
+                    ProbeResult(url, if (received > 0) Probe.STALL else Probe.TIMEOUT, null)
+                }
+            }
+        } catch (e: SocketTimeoutException) {
+            ProbeResult(url, if (received > 0) Probe.STALL else Probe.TIMEOUT, null)
+        } catch (e: UnknownHostException) {
+            ProbeResult(url, Probe.DNS, null)
+        } catch (e: SSLHandshakeException) {
+            val cert = generateSequence(e as Throwable) { it.cause }.any { it is CertificateException }
+            ProbeResult(url, if (cert) Probe.CERT else Probe.RESET, null)
+        } catch (e: java.net.SocketException) {
+            ProbeResult(url, if (received > 0) Probe.STALL else Probe.RESET, null)
+        } catch (e: Exception) {
+            ProbeResult(url, Probe.ERROR, null)
+        }
+    }
+
     suspend fun checkServices(
         services: List<String> = CHECK_TARGETS.keys.toList(),
         socksPort: Int?,
@@ -101,8 +177,10 @@ object Checker {
             return StrategyScore(st, 0, 0, null)
         }
         return try {
-            val (ok, total, ms) = summarize(checkServices(STRATEGY_SERVICES, port, 4000))
-            StrategyScore(st, ok, total, ms)
+            val results = checkServices(STRATEGY_SERVICES, port, 4000)
+            val (ok, total, ms) = summarize(results)
+            val downloads = results["Загрузка с YouTube"].orEmpty().count { it.status == Probe.OK }
+            StrategyScore(st, ok, total, ms, downloads)
         } catch (e: Exception) {
             StrategyScore(st, 0, 0, null)
         } finally {
@@ -133,6 +211,6 @@ object Checker {
                 group.mapIndexed { j, st -> async { testStrategy(ctx, st, TEST_PORT + start + j) } }.awaitAll()
             }
         }
-        scores.sortedWith(compareBy({ -it.ok }, { it.ms ?: Long.MAX_VALUE }))
+        scores.sortedWith(compareBy({ -it.downloadsOk }, { -it.ok }, { it.ms ?: Long.MAX_VALUE }))
     }
 }
